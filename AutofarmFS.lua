@@ -1,431 +1,144 @@
 --!optimize 2
 --[[
-    Features:
-    1. Complete Autofarm with Auto-Block
-    2. Simple ESP System (DrawingImmediate)
-    3. RightControl toggle UI
-    4. Player Whitelist Dropdown System
---]]
+    SYRA AUTOFARM | v2.9
+    - Fix: Resolved "Expected identifier" syntax error.
+    - Fix: Restored Player List & Whitelist functionality.
+    - ESP: Traditional BillboardGui method + DrawingImmediate overlay
+]]
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Sploiter13/severefuncs/refs/heads/main/merge.lua"))();
-
-local Load = luau.load(game:HttpGet("https://raw.githubusercontent.com/DCHARLESAKAMRGREEN/Severe-Luas/main/Libraries/Pseudosynonym.lua"))
-local Library = Load()
+local Library = luau.load(game:HttpGet("https://raw.githubusercontent.com/DCHARLESAKAMRGREEN/Severe-Luas/main/Libraries/Pseudosynonym.lua"))()
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 
--- ========= AUTOFARM STATE =========
+-- ========= CONFIGURATION & STATE =========
 local FarmState = {
     Enabled = false,
-    SelectedTarget = nil,
     SelectedTargetLower = "",
-    AutoBlock = true,  -- Renamed from SoloGuard
+    AutoBlock = true,
+    AutoKick = false,
     BehindDist = 8,
-    YOffset = 1
+    YOffset = 1,
+    ESP_Enabled = false,
+    ESP_Names = false,
+    ESP_Level = false,
+    ESP_Health = false,
+    BossAlert = false
 }
 
+local WhitelistedPlayers = {}
 local CurrentTarget = nil
-local phase = "idle"
-local cooldownEnds = 0
-local phaseStart = 0
-local targetSwitchTime = 0  -- Added for delay
+local phase, cooldownEnds, phaseStart, targetSwitchTime = "idle", 0, 0, 0
+local lastStatusText = ""
+local TELE_BUFF = buffer.create(12)
 
--- ========= PLAYER WHITELIST =========
-local WhitelistedUsers = {LocalPlayer.UserId}
-local WhitelistedNames = {} -- Store names for display
+-- ========= HELPERS =========
 
--- Constants
-local PROX_RADIUS = 50000
-local TICK_DELAY = 0.05
-local EXTRA_MARGIN = 2
-local COOLDOWN_EXTRA = 24
-local ATTACK_HOLD = 1.7
-local M1_COOLDOWN = 1.8
-local HOLD_F_COOLDOWN = true
+local function updateStatus(txt)
+    if txt ~= lastStatusText then
+        lastStatusText = txt
+        pcall(function() Status:SetValue("Status: " .. txt) end)
+    end
+end
 
--- ========= ENGINE HELPERS =========
-local function severeTeleport(part, targetPos)
+local function performKick(reason)
     pcall(function()
-        local address = engine.get_instance_address(part)
-        if address == 0 then return end
-        local buff = buffer.create(12)
-        buffer.writef32(buff, 0, targetPos.X)
-        buffer.writef32(buff, 4, targetPos.Y)
-        buffer.writef32(buff, 8, targetPos.Z)
-        memory.writebuffer(address + 0x4C, buff) 
+        local lp = game:GetService("Players").LocalPlayer
+        if lp and lp.Kick then lp:Kick(reason) else lp:Destroy() end
     end)
 end
 
-local function getRoot(model)
-    if not model then return nil end
-    return model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+local function severeTeleport(part, pos)
+    if not part or not part.Parent then return end
+    pcall(function()
+        local addr = engine.get_instance_address(part)
+        if addr and addr ~= 0 then 
+            buffer.writef32(TELE_BUFF, 0, pos.X); buffer.writef32(TELE_BUFF, 4, pos.Y); buffer.writef32(TELE_BUFF, 8, pos.Z)
+            memory.writebuffer(addr + 0x4C, TELE_BUFF) 
+        end
+    end)
 end
 
-local function isAlive(model)
-    if not model or not model:IsDescendantOf(Workspace) then return false end
+local function getRoot(m) return m and (m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart) end
+
+local function isDead(m)
+    if not m or not m.Parent then return true end
+    local state = m:FindFirstChild("State")
+    if state and string.lower(tostring(state.Value)) == "dead" then return true end
+    local hum = m:FindFirstChildOfClass("Humanoid")
+    return (hum and hum.Health <= 0) or false
+end
+
+local function getPlayerNames()
+    local n = {}
+    for _, p in ipairs(Players:GetChildren()) do
+        if p:IsA("Player") and p ~= LocalPlayer then table.insert(n, p.Name) end
+    end
+    return #n > 0 and n or {"No Players Found"}
+end
+
+-- ========= ESP LOGIC =========
+local function applyESP(enemy)
+    if not enemy or not enemy.Parent then return end
+    if enemy:FindFirstChild("SyraESP") then return end
     
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health <= 0 then return false end
-    
-    -- Enhanced death detection - check for "dead" state
-    local state = model:FindFirstChild("State")
-    if state and (state.Value == "Dead" or state.Value == "Despawning" or state.Value == "dead") then
-        return false
-    end
-    
-    return true
-end
-
--- ========= INPUT (VK CODES) =========
-local VK_F = 0x46
-
-local function m1_press() pcall(function() if mouse1press then mouse1press() end end) end
-local function m1_release() pcall(function() if mouse1release then mouse1release() end end) end
-
-local function f_press() 
-    print("[DEBUG] F key pressed")
-    pcall(function() 
-        if keydown then 
-            keydown(VK_F) 
-        elseif keypress then 
-            keypress(VK_F) 
-        end 
-    end) 
-end
-
-local function f_release() 
-    print("[DEBUG] F key released")
-    pcall(function() 
-        if keyup then 
-            keyup(VK_F) 
-        elseif keyrelease then 
-            keyrelease(VK_F) 
-        end 
-    end) 
-end
-
--- ========= UI CREATION =========
-local Window = Library:CreateWindow({
-    Title = "FSR | Severe Edition",
-    Tag = "",  -- Fixed DisplayName error
-    Keybind = "RightControl",  -- Set proper keybind for the library
-    AutoShow = false
-})
-
-local Tab = Window:AddTab({ Name = "Autofarm" })
-local Main = Tab:AddContainer({ Name = "Main", Side = "Left", AutoSize = true })
-
--- Autofarm Toggle (moved to top)
-local AutofarmToggle = Main:AddToggle({
-    Name = "Enable Autofarm",
-    Value = false,
-    Callback = function(v)
-        FarmState.Enabled = v
-        if not v then
-            CurrentTarget = nil
-            f_release()
-            m1_release()
-            Status:SetValue("Status: Autofarm Disabled")
-        else
-            if FarmState.SelectedTarget and FarmState.SelectedTarget ~= "" then
-                Status:SetValue("Status: Autofarm Enabled")
-            else
-                Status:SetValue("Status: Enter enemy name first!")
-                FarmState.Enabled = false
-                AutofarmToggle:SetValue(false)
-            end
-        end
-    end
-})
-
-local Status = Main:AddLabel({ Name = "Status: Ready" })
-
--- Enemy Name Input
-local EnemyInput = Main:AddInput({
-    Name = "Enemy Name",
-    Value = "",
-    Placeholder = "Enter enemy name...",
-    MaxLength = 50,
-    Callback = function(value)
-        -- Store both original and lowercase for case-insensitive matching
-        FarmState.SelectedTarget = value
-        FarmState.SelectedTargetLower = string.lower(value)
-        CurrentTarget = nil -- Reset target when name changes
-        Status:SetValue("Status: Target = " .. (value ~= "" and value or "None"))
-    end
-})
-
--- Settings Container
-local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true })
-
-Settings:AddSlider({
-    Name = "Distance",
-    Min = 4,
-    Max = 20,
-    Default = 8,
-    Callback = function(v) FarmState.BehindDist = v end
-})
-
-local AutoBlockToggle = Settings:AddToggle({
-    Name = "Auto-Block",
-    Value = true,
-    Callback = function(v) FarmState.AutoBlock = v end
-})
-
-local ESPToggle = Settings:AddToggle({
-    Name = "ESP",
-    Value = false,
-    Callback = function(v) 
-        _G.esp_enabled = v
-        if v then
-            print("[ESP] Enabled")
-        else
-            print("[ESP] Disabled")
-        end
-    end
-})
-
-Settings:AddButton({
-    Name = "Unlock Mouse",
-    Callback = function() pcall(function() engine.set_cursor_state(true) end) end
-})
-
--- ========= PLAYER WHITELIST TAB =========
-local WhitelistTab = Window:AddTab({ Name = "Whitelist" })
-local WhitelistContainer = WhitelistTab:AddContainer({ Name = "Player Detection Whitelist", Side = "Left", AutoSize = true })
-
--- Get current players for dropdown
-local function getPlayerList()
-    local players = {}
-    for _, player in Players:GetChildren() do
-        if player ~= LocalPlayer and not table.find(WhitelistedUsers, player.UserId) then
-            table.insert(players, player.Name)
-        end
-    end
-    return players
-end
-
-local WhitelistDropdown = WhitelistContainer:AddDropdown({
-    Name = "Select Player",
-    Options = getPlayerList(),
-    Callback = function(selectedPlayer)
-        -- Add selected player to whitelist
-        local player = Players:FindFirstChild(selectedPlayer)
-        if player then
-            table.insert(WhitelistedUsers, player.UserId)
-            WhitelistedNames[player.UserId] = player.Name
-            print("[Whitelist] Added: " .. player.Name .. " (ID: " .. player.UserId .. ")")
-            
-            -- Update dropdown to remove selected player
-            WhitelistDropdown:SetOptions(getPlayerList())
-            
-            -- Update whitelist display
-            updateWhitelistDisplay()
-        end
-    end
-})
-
--- Whitelist display
-local WhitelistDisplay = WhitelistContainer:AddLabel({Name = "Whitelisted Players:"})
-
-local function updateWhitelistDisplay()
-    local whitelistedText = "Whitelisted Players:\n"
-    whitelistedText = whitelistedText .. "- You (ID: " .. LocalPlayer.UserId .. ")"
-    for userId, name in pairs(WhitelistedNames) do
-        whitelistedText = whitelistedText .. "\n- " .. name .. " (ID: " .. userId .. ")"
-    end
-    if #WhitelistedUsers == 1 then
-        whitelistedText = whitelistedText .. "\n\nNo additional players whitelisted"
-    end
-    WhitelistDisplay:SetValue(whitelistedText)
-end
-
--- Clear whitelist button
-WhitelistContainer:AddButton({
-    Name = "Clear Additional Whitelist",
-    Callback = function()
-        WhitelistedUsers = {LocalPlayer.UserId}
-        WhitelistedNames = {}
-        WhitelistDropdown:SetOptions(getPlayerList())
-        updateWhitelistDisplay()
-        print("[Whitelist] Cleared all additional players")
-    end
-})
-
--- Initial display update
-updateWhitelistDisplay()
-
--- Menu Settings Tab
-local SettingsTab = Window:AddTab({ Name = "Settings" })
-local Menu = SettingsTab:AddContainer({ Name = "Menu", Side = "Left", AutoSize = true })
-Menu:AddMenuBind({})
-Menu:AddKeybindList({})
-Menu:AddButton({ Name = "Unload", Unsafe = true, Callback = function() Library:Unload() end })
-
--- ========= MAIN AUTOFARM LOOP =========
-task.spawn(function()
-    while true do
-        -- SAFETY: Auto-Block check with whitelist
-        if FarmState.AutoBlock then
-            local nonWhitelistedCount = 0
-            for _, player in Players:GetChildren() do
-                if not table.find(WhitelistedUsers, player.UserId) then
-                    nonWhitelistedCount = nonWhitelistedCount + 1
-                end
-            end
-            if nonWhitelistedCount > 0 then
-                LocalPlayer:Kick("Security Trip: Non-whitelisted Player Detected")
-                break
-            end
-        end
-
-        local char = LocalPlayer.Character
-        local root = getRoot(char)
+    pcall(function()
+        local bgui = Instance.new("BillboardGui", enemy)
+        bgui.Name = "SyraESP"
+        bgui.Adornee = getRoot(enemy)
+        bgui.Size = UDim2.new(0, 200, 0, 50)
+        bgui.AlwaysOnTop = true
+        bgui.ExtentsOffset = Vector3.new(0, 3, 0)
         
-        -- Stop autofarm if UI is visible
-        local shouldFarm = FarmState.Enabled and FarmState.SelectedTarget and FarmState.SelectedTarget ~= "" and not Library.Visible
+        local label = Instance.new("TextLabel", bgui)
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.TextStrokeTransparency = 0
+        label.TextSize = 14
         
-        if root and shouldFarm then
-            -- Find Target
-            if not CurrentTarget or not isAlive(CurrentTarget) then
-                -- Set target switch time if target just died
-                if CurrentTarget and not isAlive(CurrentTarget) then
-                    targetSwitchTime = os.clock() + 0.8 -- 0.8 second delay
-                end
-                
-                -- Wait for delay before finding new target
-                if os.clock() >= targetSwitchTime then
-                    local folder = Workspace:FindFirstChild("Enemies") or Workspace:FindFirstChild("Mobs")
-                    if folder then
-                        for _, m in ipairs(folder:GetChildren()) do
-                            if isAlive(m) and string.find(string.lower(m.Name), FarmState.SelectedTargetLower) then
-                                CurrentTarget = m
-                                break
-                            end
-                        end
+        task.spawn(function()
+            while enemy and enemy.Parent and not isDead(enemy) do
+                if FarmState.ESP_Enabled then
+                    local displayStr = ""
+                    if FarmState.ESP_Names then displayStr = displayStr .. enemy.Name .. "\n" end
+                    if FarmState.ESP_Level then 
+                        local lv = enemy:FindFirstChild("Level")
+                        displayStr = displayStr .. "Lv: " .. (lv and tostring(lv.Value) or "??") .. "\n"
                     end
-                end
-            end
-
-            -- Combat State Machine
-            if CurrentTarget then
-                local troot = getRoot(CurrentTarget)
-                if troot then
-                    local now = os.clock()
-                    
-                    if phase == "idle" then
-                        f_release()
-                        if now >= cooldownEnds then
-                            phase = "attack"
-                            phaseStart = now
-                            m1_press()
-                        end
-                    elseif phase == "attack" then
-                        Status:SetValue("Status: Attacking")
-                        if (now - phaseStart) >= ATTACK_HOLD then
-                            m1_release()
-                            phase = "cooldown"
-                            cooldownEnds = now + M1_COOLDOWN
-                            
-                            -- BLOCK START (with micro-delay for engine registration)
-                            if FarmState.AutoBlock then
-                                task.delay(0.01, f_press)
-                            end
-                        end
-                    elseif phase == "cooldown" then
-                        Status:SetValue("Status: Blocking...")
-                        if now >= cooldownEnds then
-                            f_release() -- RELEASE BLOCK
-                            phase = "attack"
-                            phaseStart = now
-                            m1_press()
-                        end
+                    if FarmState.ESP_Health then
+                        local hum = enemy:FindFirstChildOfClass("Humanoid")
+                        displayStr = displayStr .. "HP: " .. (hum and math.floor(hum.Health) or "0")
                     end
-
-                    -- Movement Calculation
-                    local dist = FarmState.BehindDist + EXTRA_MARGIN
-                    if phase == "cooldown" then dist = dist + COOLDOWN_EXTRA end
                     
-                    local goalPos = troot.Position + (-troot.CFrame.LookVector * dist) + Vector3.new(0, FarmState.YOffset, 0)
+                    label.Text = displayStr
+                    label.Visible = true
                     
-                    severeTeleport(root, goalPos)
-                    pcall(function()
-                        root.CFrame = CFrame.lookAt(goalPos, troot.Position)
-                        root.AssemblyLinearVelocity = Vector3.new(0,0,0)
-                    end)
+                    if FarmState.BossAlert and enemy:FindFirstChild("Boss") then
+                        label.TextColor3 = Color3.new(1, 0, 0)
+                        label.TextSize = 18
+                    else
+                        label.TextColor3 = Color3.new(1, 1, 1)
+                        label.TextSize = 14
+                    end
+                else
+                    label.Visible = false
                 end
-            else
-                Status:SetValue("Status: Searching...")
+                task.wait(0.1)
             end
-        else
-            if not FarmState.Enabled then
-                Status:SetValue("Status: Disabled")
-            elseif not FarmState.SelectedTarget or FarmState.SelectedTarget == "" then
-                Status:SetValue("Status: No target selected")
-            elseif Library.Visible then
-                Status:SetValue("Status: Paused (UI Open)")
-            else
-                Status:SetValue("Status: Waiting...")
-            end
-        end
-        task.wait(TICK_DELAY)
-    end
-end)
+            pcall(function() bgui:Destroy() end)
+        end)
+    end)
+end
 
--- ========= CURSOR MANAGEMENT =========
-task.spawn(function()
-    while true do
-        if Library.Visible then
-            pcall(function() 
-                engine.set_cursor_state(true)
-                game:GetService("UserInputService").MouseIconEnabled = true
-                game:GetService("UserInputService").MouseBehavior = Enum.MouseBehavior.Default
-            end)
-        else
-            pcall(function()
-                game:GetService("UserInputService").MouseIconEnabled = true
-            end)
-        end
-        task.wait(0.05)
-    end
-end)
-
--- ========= MANUAL KEYBIND =========
--- Use Severe's input system instead of UserInputService
-task.spawn(function()
-    while true do
-        -- Check for RightControl key press using Severe's input
-        if keydown and keydown(0xA3) then -- 0xA3 is RightControl VK code
-            Library.Visible = not Library.Visible
-            if Library.Visible then
-                pcall(function() 
-                    engine.set_cursor_state(true)
-                    game:GetService("UserInputService").MouseIconEnabled = true
-                    game:GetService("UserInputService").MouseBehavior = Enum.MouseBehavior.Default
-                end)
-            else
-                pcall(function()
-                    game:GetService("UserInputService").MouseIconEnabled = true
-                end)
-            end
-            task.wait(0.5) -- Prevent rapid toggling
-        end
-        task.wait(0.1)
-    end
-end)
-
-print("[FSR Autofarm] Complete UI loaded!")
-print("[FSR Autofarm] Press RightControl to toggle menu")
-print("[FSR Autofarm] Features: Autofarm, NPC detection, Auto-Block, Toggleable ESP, Player Whitelist")
-
--- ========= WORKING ESP SYSTEM =========
+-- ========= DRAWING IMMEDIATE ESP SYSTEM =========
 local Client = Players.LocalPlayer
 local CurrentCamera = Workspace.CurrentCamera
 
--- Configuration
+-- Drawing ESP Configuration
 local ESP_TEXT_COLOR = Color3.fromRGB(125, 165, 255)
 local NPC_TEXT_COLOR = Color3.fromRGB(255, 50, 50)
 local TEXT_SIZE = 12
@@ -434,18 +147,26 @@ local FONT_NAME = "Tamzen"
 local VERTICAL_OFFSET = 20
 local MAX_NPC_ESP_DISTANCE = 150
 
--- Helper function using Luau String Interpolation
+-- Helper function for player level text
 local function getLevelText(Player: Player): string
-    local leaderstats = Player:FindFirstChild("leaderstats")
-    local level = if leaderstats then leaderstats:FindFirstChild("Level") else nil
-    return if level then `Lv. {level.Value}` else "Lv. ???" 
+    local liveFolder = Workspace:FindFirstChild("Live")
+    if liveFolder then
+        local playerFolder = liveFolder:FindFirstChild(Player.Name)
+        if playerFolder then
+            local levelValue = playerFolder:FindFirstChild("Level")
+            if levelValue and levelValue:IsA("IntValue") then
+                return `Lv. {levelValue.Value}`
+            end
+        end
+    end
+    return "Lv. ???"
 end
 
--- Main Render Loop
+-- DrawingImmediate ESP Render Loop
 if RunService and RunService.Render then
     RunService.Render:Connect(function()
         -- Check if ESP is enabled via UI toggle
-        if not _G.esp_enabled then return end
+        if not FarmState.ESP_Enabled then return end
         
         if not CurrentCamera then return end
 
@@ -459,11 +180,11 @@ if RunService and RunService.Render then
                 if Head and Humanoid then
                     -- Use the vector library function for distance
                     local diff = CurrentCamera.CFrame.Position - Head.Position
-                    local Distance = vector.magnitude(diff)
+                    local Distance = (diff.X^2 + diff.Y^2 + diff.Z^2)^0.5
                     
                     if Distance <= MAX_NPC_ESP_DISTANCE then
                         local ScreenPos, Visible = CurrentCamera:WorldToScreenPoint(Head.Position)
-                        if Visible then
+                        if Visible and FarmState.ESP_Health then
                             local healthText = `HP: {math.floor(Humanoid.Health)}` 
                             
                             DrawingImmediate.OutlinedText(
@@ -481,7 +202,7 @@ if RunService and RunService.Render then
             end
         end
 
-        -- 2. PLAYER LEVEL ESP
+        -- 2. PLAYER ESP (Names and Levels)
         for _, Player in Players:GetChildren() do
             if Player == Client then continue end
             
@@ -491,23 +212,200 @@ if RunService and RunService.Render then
             if Head then
                 local ScreenPos, Visible = CurrentCamera:WorldToScreenPoint(Head.Position)
                 if Visible then
-                    local displayString = getLevelText(Player)
+                    local yOffset = VERTICAL_OFFSET
                     
-                    DrawingImmediate.OutlinedText(
-                        Vector2.new(ScreenPos.X, ScreenPos.Y - VERTICAL_OFFSET), 
-                        TEXT_SIZE, 
-                        ESP_TEXT_COLOR, 
-                        TEXT_OPACITY, 
-                        displayString, 
-                        true, 
-                        FONT_NAME
-                    )
+                    -- Player Name ESP
+                    if FarmState.ESP_Names then
+                        DrawingImmediate.OutlinedText(
+                            Vector2.new(ScreenPos.X, ScreenPos.Y - yOffset), 
+                            TEXT_SIZE, 
+                            ESP_TEXT_COLOR, 
+                            TEXT_OPACITY, 
+                            Player.Name, 
+                            true, 
+                            FONT_NAME
+                        )
+                        yOffset = yOffset + 15 -- Offset for next line
+                    end
+                    
+                    -- Player Level ESP
+                    if FarmState.ESP_Level then
+                        local displayString = getLevelText(Player)
+                        DrawingImmediate.OutlinedText(
+                            Vector2.new(ScreenPos.X, ScreenPos.Y - yOffset), 
+                            TEXT_SIZE, 
+                            ESP_TEXT_COLOR, 
+                            TEXT_OPACITY, 
+                            displayString, 
+                            true, 
+                            FONT_NAME
+                        )
+                    end
                 end
             end
         end
     end)
 end
 
-print("[FSR ESP] Working ESP system initialized!")
+-- ========= UI SETUP =========
+local Window = Library:CreateWindow({
+    Title = "Syra | v2.9", 
+    Tag = "Stable", 
+    Keybind = "RightControl", 
+    AutoShow = true
+}) -- [cite: 3, 4, 6]
+
+local Tab = Window:AddTab({ Name = "Main" }) -- [cite: 12]
+local EspTab = Window:AddTab({ Name = "Visuals" }) -- [cite: 12]
+
+-- Main Farm Container
+local Main = Tab:AddContainer({ Name = "Autofarm", Side = "Left", AutoSize = true }) -- [cite: 14, 15]
+Status = Main:AddLabel({ Name = "Status: Ready" }) -- [cite: 42]
+
+Main:AddToggle({
+    Name = "Enable Autofarm", 
+    Value = false, 
+    Callback = function(v) FarmState.Enabled = v end
+}) -- [cite: 22]
+
+Main:AddInput({
+    Name = "Enemy Name", 
+    Placeholder = "Enemy...", 
+    Callback = function(v) 
+        FarmState.SelectedTargetLower = string.lower(v)
+        CurrentTarget = nil 
+    end
+}) -- [cite: 37, 38, 41]
+
+-- Settings & Security Container
+local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true }) -- [cite: 14, 15]
+
+Settings:AddToggle({
+    Name = "Auto-Block (F)", 
+    Value = true, 
+    Callback = function(v) FarmState.AutoBlock = v end
+}) -- [cite: 22]
+
+Settings:AddToggle({
+    Name = "Auto-Kick (Security)", 
+    Value = false, 
+    Callback = function(v) FarmState.AutoKick = v end
+}) -- [cite: 22]
+
+local PlayerList = Settings:AddDropdown({
+    Name = "Whitelist",
+    Values = getPlayerNames(),
+    Default = {},
+    Multi = true,
+    Callback = function(v) WhitelistedPlayers = v or {} end
+}) -- [cite: 32, 33, 35]
+
+Settings:AddButton({
+    Name = "Refresh Player List", 
+    Callback = function()
+        if PlayerList.SetValues then 
+            PlayerList:SetValues(getPlayerNames()) 
+        end 
+    end
+}) -- [cite: 25]
+
+-- ESP Visuals Container
+local EspCont = EspTab:AddContainer({ Name = "ESP Settings", Side = "Left", AutoSize = true }) -- [cite: 14, 15]
+
+EspCont:AddToggle({Name = "ESP On", Value = false, Callback = function(v) FarmState.ESP_Enabled = v end}) -- [cite: 22]
+EspCont:AddToggle({Name = "Name", Value = false, Callback = function(v) FarmState.ESP_Names = v end}) -- [cite: 22]
+EspCont:AddToggle({Name = "Level", Value = false, Callback = function(v) FarmState.ESP_Level = v end}) -- [cite: 22]
+EspCont:AddToggle({Name = "NPC Health", Value = false, Callback = function(v) FarmState.ESP_Health = v end}) -- [cite: 22]
+EspCont:AddToggle({Name = "Boss Alert", Value = false, Callback = function(v) FarmState.BossAlert = v end}) -- [cite: 22]
+
+-- ========= CORE LOOPS =========
+task.spawn(function()
+    while true do
+        if FarmState.ESP_Enabled then
+            local enemies = Workspace:FindFirstChild("Enemies")
+            if enemies then
+                for _, enemy in ipairs(enemies:GetChildren()) do
+                    if not isDead(enemy) then applyESP(enemy) end
+                end
+            end
+        end
+        task.wait(2)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if FarmState.AutoKick and not Library.Visible then
+            for _, p in ipairs(Players:GetChildren()) do
+                if p:IsA("Player") and p ~= LocalPlayer then
+                    local safe = false
+                    for _, name in pairs(WhitelistedPlayers) do
+                        if name == p.Name then safe = true break end
+                    end
+                    if not safe then performKick("Security: " .. p.Name .. " detected."); break end
+                end
+            end
+        end
+
+        local root = getRoot(LocalPlayer.Character)
+        if root and FarmState.Enabled and FarmState.SelectedTargetLower ~= "" and not Library.Visible then
+            if not CurrentTarget or isDead(CurrentTarget) then
+                if CurrentTarget then 
+                    CurrentTarget = nil
+                    targetSwitchTime = os.clock() + 1.0
+                    updateStatus("Waiting 1s...") 
+                end
+                if os.clock() >= targetSwitchTime then
+                    local folder = Workspace:FindFirstChild("Enemies")
+                    if folder then
+                        for _, m in ipairs(folder:GetChildren()) do
+                            if not isDead(m) and string.find(string.lower(m.Name), FarmState.SelectedTargetLower) then
+                                CurrentTarget = m; break
+                            end
+                        end
+                    end
+                end
+            end
+
+            if CurrentTarget then
+                local troot = getRoot(CurrentTarget)
+                if troot then
+                    local now = os.clock()
+                    if phase == "idle" then
+                        (keyup or keyrelease)(0x46)
+                        if now >= cooldownEnds then phase, phaseStart = "attack", now; mouse1press() end
+                    elseif phase == "attack" and (now - phaseStart) >= 1.7 then
+                        mouse1release()
+                        phase, cooldownEnds = "cooldown", now + 1.8
+                        if FarmState.AutoBlock then task.delay(0.01, function() (keydown or keypress)(0x46) end) end
+                    elseif phase == "cooldown" and now >= cooldownEnds then
+                        (keyup or keyrelease)(0x46)
+                        phase, phaseStart = "attack", now; mouse1press()
+                    end
+
+                    local dist = FarmState.BehindDist + (phase == "cooldown" and 26 or 2)
+                    local goal = troot.Position + (-troot.CFrame.LookVector * dist) + Vector3.new(0, FarmState.YOffset, 0)
+                    severeTeleport(root, goal)
+                    pcall(function() 
+                        root.CFrame = CFrame.lookAt(goal, troot.Position)
+                        root.AssemblyLinearVelocity = Vector3.zero 
+                    end)
+                end
+            end
+        end
+        task.wait(0.05)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if keydown and keydown(0xA3) then 
+            Library.Visible = not Library.Visible
+            task.wait(0.5) 
+        end
+        task.wait(0.1)
+    end
+end)
+
+print("[FSR ESP] DrawingImmediate ESP system initialized!")
 print("[FSR ESP] Features: Player levels, Enemy health - Use UI toggle to enable")
-print("[FSR Whitelist] Player whitelist system ready!")
