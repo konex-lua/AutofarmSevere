@@ -556,16 +556,10 @@ local function showContextMenu(inputBox, mousePos)
 end
 
 -- Right-click detection for input fields
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 and not gameProcessed then
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
         -- Check if clicking on an input field
         local mousePos = UserInputService:GetMouseLocation()
-        local targetObjects = game:GetService("Workspace"):FindPartsInRegionWithIgnoreList(
-            Workspace.CurrentCamera:ScreenPointToRay(mousePos.X, mousePos.Y).Direction * 1000,
-            Workspace.CurrentCamera.CFrame.Position,
-            {},
-            1
-        )
         
         -- Try to find input field through GUI
         local playerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -590,7 +584,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 -- Close context menu on left click
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+UserInputService.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 and ContextMenu then
         ContextMenu:Destroy()
         ContextMenu = nil
