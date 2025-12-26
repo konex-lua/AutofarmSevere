@@ -6,10 +6,27 @@
     3. RightControl toggle UI
 --]]
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Sploiter13/severefuncs/refs/heads/main/merge.lua"))();
+-- Try to load severefuncs, but continue even if it fails
+pcall(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Sploiter13/severefuncs/refs/heads/main/merge.lua"))();
+end)
 
-local Load = luau.load(game:HttpGet("https://raw.githubusercontent.com/DCHARLESAKAMRGREEN/Severe-Luas/main/Libraries/Pseudosynonym.lua"))
-local Library = Load()
+-- Wait a moment for libraries to load
+task.wait(0.5)
+
+-- Check if luau is available, otherwise use fallback
+local Library = nil
+if luau and luau.load then
+    local Load = luau.load(game:HttpGet("https://raw.githubusercontent.com/DCHARLESAKAMRGREEN/Severe-Luas/main/Libraries/Pseudosynonym.lua"))
+    Library = Load()
+else
+    -- Fallback: Create a simple UI or continue without UI
+    warn("Severefuncs not available - Running without UI")
+    Library = {
+        Visible = false,
+        CreateWindow = function() return nil end
+    }
+end
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -103,97 +120,116 @@ local function f_release()
 end
 
 -- ========= UI CREATION =========
-local Window = Library:CreateWindow({
-    Title = "FSR | Severe Edition",
-    Tag = "",  -- Fixed DisplayName error
-    Keybind = "RightControl",  -- Set proper keybind for the library
-    AutoShow = false
-})
+local Window, Tab, Main, Status, ESPToggle
 
-local Tab = Window:AddTab({ Name = "Autofarm" })
-local Main = Tab:AddContainer({ Name = "Main", Side = "Left", AutoSize = true })
+if Library and Library.CreateWindow then
+    Window = Library:CreateWindow({
+        Title = "FSR | Severe Edition",
+        Tag = "",
+        Keybind = "RightControl",
+        AutoShow = false
+    })
 
--- Autofarm Toggle (moved to top)
-local AutofarmToggle = Main:AddToggle({
-    Name = "Enable Autofarm",
-    Value = false,
-    Callback = function(v)
-        FarmState.Enabled = v
-        if not v then
-            CurrentTarget = nil
-            f_release()
-            m1_release()
-            Status:SetValue("Status: Autofarm Disabled")
-        else
-            if FarmState.SelectedTarget and FarmState.SelectedTarget ~= "" then
-                Status:SetValue("Status: Autofarm Enabled")
+    Tab = Window:AddTab({ Name = "Autofarm" })
+    Main = Tab:AddContainer({ Name = "Main", Side = "Left", AutoSize = true })
+
+    -- Autofarm Toggle (moved to top)
+    local AutofarmToggle = Main:AddToggle({
+        Name = "Enable Autofarm",
+        Value = false,
+        Callback = function(v)
+            FarmState.Enabled = v
+            if not v then
+                CurrentTarget = nil
+                f_release()
+                m1_release()
+                if Status then Status:SetValue("Status: Autofarm Disabled") end
             else
-                Status:SetValue("Status: Enter enemy name first!")
-                FarmState.Enabled = false
-                AutofarmToggle:SetValue(false)
+                if FarmState.SelectedTarget and FarmState.SelectedTarget ~= "" then
+                    if Status then Status:SetValue("Status: Autofarm Enabled") end
+                else
+                    if Status then Status:SetValue("Status: Enter enemy name first!") end
+                    FarmState.Enabled = false
+                    AutofarmToggle:SetValue(false)
+                end
             end
         end
-    end
-})
+    })
 
-local Status = Main:AddLabel({ Name = "Status: Ready" })
+    Status = Main:AddLabel({ Name = "Status: Ready" })
 
--- Enemy Name Input
-local EnemyInput = Main:AddInput({
-    Name = "Enemy Name",
-    Value = "",
-    Placeholder = "Enter enemy name...",
-    MaxLength = 50,
-    Callback = function(value)
-        -- Store both original and lowercase for case-insensitive matching
-        FarmState.SelectedTarget = value
-        FarmState.SelectedTargetLower = string.lower(value)
-        CurrentTarget = nil -- Reset target when name changes
-        Status:SetValue("Status: Target = " .. (value ~= "" and value or "None"))
-    end
-})
-
--- Settings Container
-local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true })
-
-Settings:AddSlider({
-    Name = "Distance",
-    Min = 4,
-    Max = 20,
-    Default = 8,
-    Callback = function(v) FarmState.BehindDist = v end
-})
-
-local AutoBlockToggle = Settings:AddToggle({
-    Name = "Auto-Block",
-    Value = true,
-    Callback = function(v) FarmState.AutoBlock = v end
-})
-
-local ESPToggle = Settings:AddToggle({
-    Name = "ESP",
-    Value = false,
-    Callback = function(v) 
-        _G.esp_enabled = v
-        if v then
-            print("[ESP] Enabled")
-        else
-            print("[ESP] Disabled")
+    -- Enemy Name Input
+    local EnemyInput = Main:AddInput({
+        Name = "Enemy Name",
+        Value = "",
+        Placeholder = "Enter enemy name...",
+        MaxLength = 50,
+        Callback = function(value)
+            FarmState.SelectedTarget = value
+            FarmState.SelectedTargetLower = string.lower(value)
+            CurrentTarget = nil
+            if Status then Status:SetValue("Status: Target = " .. (value ~= "" and value or "None")) end
         end
-    end
-})
+    })
 
-Settings:AddButton({
-    Name = "Unlock Mouse",
-    Callback = function() pcall(function() engine.set_cursor_state(true) end) end
-})
+    -- Settings Container
+    local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true })
 
--- Menu Settings Tab
-local SettingsTab = Window:AddTab({ Name = "Settings" })
-local Menu = SettingsTab:AddContainer({ Name = "Menu", Side = "Left", AutoSize = true })
-Menu:AddMenuBind({})
-Menu:AddKeybindList({})
-Menu:AddButton({ Name = "Unload", Unsafe = true, Callback = function() Library:Unload() end })
+    Settings:AddSlider({
+        Name = "Distance",
+        Min = 4,
+        Max = 20,
+        Default = 8,
+        Callback = function(v) FarmState.BehindDist = v end
+    })
+
+    local AutoBlockToggle = Settings:AddToggle({
+        Name = "Auto-Block",
+        Value = true,
+        Callback = function(v) FarmState.AutoBlock = v end
+    })
+
+    ESPToggle = Settings:AddToggle({
+        Name = "ESP",
+        Value = false,
+        Callback = function(v) 
+            _G.esp_enabled = v
+            if v then
+                print("[ESP] Enabled")
+            else
+                print("[ESP] Disabled")
+            end
+        end
+    })
+
+    Settings:AddButton({
+        Name = "Unlock Mouse",
+        Callback = function() pcall(function() engine.set_cursor_state(true) end) end
+    })
+
+    -- Menu Settings Tab
+    local SettingsTab = Window:AddTab({ Name = "Settings" })
+    local Menu = SettingsTab:AddContainer({ Name = "Menu", Side = "Left", AutoSize = true })
+    Menu:AddMenuBind({})
+    Menu:AddKeybindList({})
+    Menu:AddButton({ Name = "Unload", Unsafe = true, Callback = function() Library:Unload() end })
+else
+    -- Fallback: Simple console-based controls
+    print("[FSR Autofarm] UI not available - Using console controls")
+    print("[FSR Autofarm] Set enemy name with: FarmState.SelectedTarget = \"EnemyName\"")
+    print("[FSR Autofarm] Enable autofarm with: FarmState.Enabled = true")
+    print("[FSR Autofarm] Enable ESP with: _G.esp_enabled = true")
+    
+    -- Create dummy status
+    Status = {
+        SetValue = function(text) print("[Status]", text) end
+    }
+    
+    -- Create dummy ESP toggle
+    ESPToggle = {
+        SetValue = function(v) _G.esp_enabled = v end
+    }
+end
 
 -- ========= MAIN AUTOFARM LOOP =========
 task.spawn(function()
@@ -208,7 +244,7 @@ task.spawn(function()
         local root = getRoot(char)
         
         -- Stop autofarm if UI is visible
-        local shouldFarm = FarmState.Enabled and FarmState.SelectedTarget and FarmState.SelectedTarget ~= "" and not Library.Visible
+        local shouldFarm = FarmState.Enabled and FarmState.SelectedTarget and FarmState.SelectedTarget ~= "" and not (Library and Library.Visible)
         
         if root and shouldFarm then
             -- Find Target
@@ -284,13 +320,13 @@ task.spawn(function()
             end
         else
             if not FarmState.Enabled then
-                Status:SetValue("Status: Disabled")
+                if Status then Status:SetValue("Status: Disabled") end
             elseif not FarmState.SelectedTarget or FarmState.SelectedTarget == "" then
-                Status:SetValue("Status: No target selected")
-            elseif Library.Visible then
-                Status:SetValue("Status: Paused (UI Open)")
+                if Status then Status:SetValue("Status: No target selected") end
+            elseif Library and Library.Visible then
+                if Status then Status:SetValue("Status: Paused (UI Open)") end
             else
-                Status:SetValue("Status: Waiting...")
+                if Status then Status:SetValue("Status: Waiting...") end
             end
         end
         task.wait(TICK_DELAY)
