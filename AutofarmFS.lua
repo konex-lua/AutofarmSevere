@@ -84,7 +84,37 @@ local function getPlayerNames()
     return #n > 0 and n or {"No Players Found"}
 end
 
+local function getEnemyNames()
+    local n = {}
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if enemies then
+        for _, enemy in ipairs(enemies:GetChildren()) do
+            -- Basic checks for valid enemy
+            if enemy and enemy.Name and enemy.Name ~= "" and enemy.Parent then
+                -- Simple alive check - just check if it exists and has a humanoid
+                local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    table.insert(n, enemy.Name)
+                elseif not humanoid then
+                    -- If no humanoid, assume it's alive (some NPCs might not have humanoids)
+                    table.insert(n, enemy.Name)
+                end
+            end
+        end
+    end
+    
+    -- Add some test items if no enemies found, to demonstrate scrolling
+    if #n == 0 then
+        for i = 1, 20 do
+            table.insert(n, "Test Enemy " .. i)
+        end
+    end
+    
+    return #n > 0 and n or {"No Enemies Found"}
+end
+
 -- ========= ESP LOGIC =========
+
 local function applyESP(enemy)
     if not enemy or not enemy.Parent then return end
     if enemy:FindFirstChild("SyraESP") then return end
@@ -272,14 +302,28 @@ Main:AddToggle({
     Callback = function(v) FarmState.Enabled = v end
 }) -- [cite: 22]
 
-Main:AddInput({
-    Name = "Enemy Name", 
-    Placeholder = "Enemy...", 
+-- Enemy Selection Dropdown
+local EnemyDropdown = Main:AddDropdown({
+    Name = "Select Enemy",
+    Values = getEnemyNames(),
+    Default = "No Enemies Found",
     Callback = function(v) 
         FarmState.SelectedTargetLower = string.lower(v)
         CurrentTarget = nil 
+        updateStatus("Target: " .. v)
     end
-}) -- [cite: 37, 38, 41]
+})
+
+-- Refresh Enemy List Button
+Main:AddButton({
+    Name = "Refresh Enemy List", 
+    Callback = function()
+        if EnemyDropdown.SetValues then 
+            EnemyDropdown:SetValues(getEnemyNames()) 
+        end 
+        updateStatus("Enemy list refreshed")
+    end
+})
 
 -- Settings & Security Container
 local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true }) -- [cite: 14, 15]
@@ -441,153 +485,3 @@ end)
 
 print("[FSR ESP] DrawingImmediate ESP system initialized!")
 print("[FSR ESP] Features: Player levels, Enemy health - Use UI toggle to enable")
-
--- ========= RIGHT-CLICK CONTEXT MENU =========
-local ContextMenu = nil
-local FocusedInput = nil
-
--- Create context menu GUI
-local function createContextMenu()
-    if ContextMenu then
-        ContextMenu:Destroy()
-    end
-    
-    ContextMenu = Instance.new("ScreenGui")
-    ContextMenu.Name = "SyraContextMenu"
-    ContextMenu.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    ContextMenu.Parent = game:GetService("CoreGui")
-    
-    local Frame = Instance.new("Frame")
-    Frame.Name = "MenuFrame"
-    Frame.Size = UDim2.new(0, 120, 0, 80)
-    Frame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    Frame.BorderSizePixel = 1
-    Frame.BorderColor3 = Color3.fromRGB(100, 100, 100)
-    Frame.Parent = ContextMenu
-    
-    local UICorner = Instance.new("UICorner")
-    UICorner.CornerRadius = UDim.new(0, 4)
-    UICorner.Parent = Frame
-    
-    -- Copy button
-    local CopyBtn = Instance.new("TextButton")
-    CopyBtn.Name = "CopyBtn"
-    CopyBtn.Size = UDim2.new(1, 0, 0, 40)
-    CopyBtn.Position = UDim2.new(0, 0, 0, 0)
-    CopyBtn.BackgroundTransparency = 1
-    CopyBtn.Text = "Copy"
-    CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    CopyBtn.TextSize = 14
-    CopyBtn.Font = Enum.Font.SourceSans
-    CopyBtn.Parent = Frame
-    
-    -- Paste button
-    local PasteBtn = Instance.new("TextButton")
-    PasteBtn.Name = "PasteBtn"
-    PasteBtn.Size = UDim2.new(1, 0, 0, 40)
-    PasteBtn.Position = UDim2.new(0, 0, 0, 40)
-    PasteBtn.BackgroundTransparency = 1
-    PasteBtn.Text = "Paste"
-    PasteBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    PasteBtn.TextSize = 14
-    PasteBtn.Font = Enum.Font.SourceSans
-    PasteBtn.Parent = Frame
-    
-    -- Button hover effects
-    local function addHoverEffect(btn)
-        btn.MouseEnter:Connect(function()
-            btn.BackgroundTransparency = 0.8
-            btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        end)
-        btn.MouseLeave:Connect(function()
-            btn.BackgroundTransparency = 1
-        end)
-    end
-    
-    addHoverEffect(CopyBtn)
-    addHoverEffect(PasteBtn)
-    
-    -- Button actions
-    CopyBtn.MouseButton1Click:Connect(function()
-        if FocusedInput and FocusedInput.Text then
-            GuiService:SetClipboard(FocusedInput.Text)
-        end
-        ContextMenu:Destroy()
-        ContextMenu = nil
-    end)
-    
-    PasteBtn.MouseButton1Click:Connect(function()
-        if FocusedInput then
-            local success, result = pcall(function()
-                return GuiService:GetClipboardText()
-            end)
-            if success and result then
-                FocusedInput.Text = result
-            end
-        end
-        ContextMenu:Destroy()
-        ContextMenu = nil
-    end)
-    
-    return Frame
-end
-
--- Show context menu at mouse position
-local function showContextMenu(inputBox, mousePos)
-    FocusedInput = inputBox
-    local menuFrame = createContextMenu()
-    
-    -- Position menu at mouse position
-    local screenSize = Workspace.CurrentCamera.ViewportSize
-    local menuSize = Vector2.new(120, 80)
-    
-    local x = mousePos.X
-    local y = mousePos.Y
-    
-    -- Keep menu on screen
-    if x + menuSize.X > screenSize.X then
-        x = screenSize.X - menuSize.X
-    end
-    if y + menuSize.Y > screenSize.Y then
-        y = screenSize.Y - menuSize.Y
-    end
-    
-    menuFrame.Position = UDim2.new(0, x, 0, y)
-end
-
--- Right-click detection for input fields
-UserInputService.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        -- Check if clicking on an input field
-        local mousePos = UserInputService:GetMouseLocation()
-        
-        -- Try to find input field through GUI
-        local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-        for _, gui in pairs(playerGui:GetChildren()) do
-            if gui:FindFirstChild("Syra") or gui.Name:find("Syra") then
-                -- Look for TextBox instances
-                for _, child in pairs(gui:GetDescendants()) do
-                    if child:IsA("TextBox") and child.Visible then
-                        local absPos = child.AbsolutePosition
-                        local absSize = child.AbsoluteSize
-                        
-                        if mousePos.X >= absPos.X and mousePos.X <= absPos.X + absSize.X and
-                           mousePos.Y >= absPos.Y and mousePos.Y <= absPos.Y + absSize.Y then
-                            showContextMenu(child, mousePos)
-                            return
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- Close context menu on left click
-UserInputService.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 and ContextMenu then
-        ContextMenu:Destroy()
-        ContextMenu = nil
-        FocusedInput = nil
-    end
-end)
