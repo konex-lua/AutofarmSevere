@@ -373,8 +373,9 @@ task.spawn(function()
                         for _, m in ipairs(folder:GetChildren()) do
                             if not isDead(m) and string.find(string.lower(m.Name), FarmState.SelectedTargetLower) then
                                 local enemyRoot = getRoot(m)
-                                if enemyRoot and enemyRoot.Position then
-                                    local distance = (root.Position - enemyRoot.Position).Magnitude
+                                if enemyRoot and enemyRoot.Position and root and root.Position then
+                                    local diff = root.Position - enemyRoot.Position
+                                    local distance = (diff.X^2 + diff.Y^2 + diff.Z^2)^0.5
                                     if distance <= closestDistance then
                                         closestDistance = distance
                                         closestTarget = m
