@@ -373,7 +373,7 @@ task.spawn(function()
                         for _, m in ipairs(folder:GetChildren()) do
                             if not isDead(m) and string.find(string.lower(m.Name), FarmState.SelectedTargetLower) then
                                 local enemyRoot = getRoot(m)
-                                if enemyRoot then
+                                if enemyRoot and enemyRoot.Position then
                                     local distance = (root.Position - enemyRoot.Position).Magnitude
                                     if distance <= closestDistance then
                                         closestDistance = distance
@@ -420,9 +420,8 @@ end)
 
 task.spawn(function()
     while true do
-        if keydown and keydown(0xA3) then 
+        if keydown and keydown(0xA3) and not Library.Visible then 
             Library.Visible = not Library.Visible
-            task.wait(0.5) 
         end
         task.wait(0.1)
     end
