@@ -104,8 +104,8 @@
 
     -- ========= UI CREATION =========
     local Window = Library:CreateWindow({
-        Title = "Syra | Severe Fixed",
-        Tag = "Syra",  -- Fixed DisplayName error
+        Title = "FSR | Severe Edition",
+        Tag = "",  -- Fixed DisplayName error
         Keybind = "RightControl",  -- Set proper keybind for the library
         AutoShow = false
     })
@@ -176,9 +176,9 @@
         Callback = function(v) 
             _G.esp_enabled = v
             if v then
-                print("[Syra ESP] Enabled")
+                print("[ESP] Enabled")
             else
-                print("[Syra ESP] Disabled")
+                print("[ESP] Disabled")
             end
         end
     })
@@ -339,9 +339,9 @@
         end
     end)
 
-    print("[Syra Autofarm] Complete UI loaded!")
-    print("[Syra Autofarm] Press RightControl to toggle menu")
-    print("[Syra Autofarm] Features: Autofarm, NPC detection, Auto-Block, Toggleable ESP")
+    print("[FSR Autofarm] Complete UI loaded!")
+    print("[FSR Autofarm] Press RightControl to toggle menu")
+    print("[FSR Autofarm] Features: Autofarm, NPC detection, Auto-Block, Toggleable ESP")
 
     -- ========= WORKING ESP SYSTEM =========
     local Client = Players.LocalPlayer
@@ -430,5 +430,5 @@
         end)
     end
 
-    print("[Syra ESP] Working ESP system initialized!")
-    print("[Syra ESP] Features: Player levels, Enemy health - Use UI toggle to enable")
+    print("[FSR ESP] Working ESP system initialized!")
+    print("[FSR ESP] Features: Player levels, Enemy health - Use UI toggle to enable")
