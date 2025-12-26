@@ -13,8 +13,6 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local GuiService = game:GetService("GuiService")
 
 -- ========= CONFIGURATION & STATE =========
 local FarmState = {
@@ -84,37 +82,7 @@ local function getPlayerNames()
     return #n > 0 and n or {"No Players Found"}
 end
 
-local function getEnemyNames()
-    local n = {}
-    local enemies = Workspace:FindFirstChild("Enemies")
-    if enemies then
-        for _, enemy in ipairs(enemies:GetChildren()) do
-            -- Basic checks for valid enemy
-            if enemy and enemy.Name and enemy.Name ~= "" and enemy.Parent then
-                -- Simple alive check - just check if it exists and has a humanoid
-                local humanoid = enemy:FindFirstChildOfClass("Humanoid")
-                if humanoid and humanoid.Health > 0 then
-                    table.insert(n, enemy.Name)
-                elseif not humanoid then
-                    -- If no humanoid, assume it's alive (some NPCs might not have humanoids)
-                    table.insert(n, enemy.Name)
-                end
-            end
-        end
-    end
-    
-    -- Add some test items if no enemies found, to demonstrate scrolling
-    if #n == 0 then
-        for i = 1, 20 do
-            table.insert(n, "Test Enemy " .. i)
-        end
-    end
-    
-    return #n > 0 and n or {"No Enemies Found"}
-end
-
 -- ========= ESP LOGIC =========
-
 local function applyESP(enemy)
     if not enemy or not enemy.Parent then return end
     if enemy:FindFirstChild("SyraESP") then return end
@@ -302,28 +270,14 @@ Main:AddToggle({
     Callback = function(v) FarmState.Enabled = v end
 }) -- [cite: 22]
 
--- Enemy Selection Dropdown
-local EnemyDropdown = Main:AddDropdown({
-    Name = "Select Enemy",
-    Values = getEnemyNames(),
-    Default = "No Enemies Found",
+Main:AddInput({
+    Name = "Enemy Name", 
+    Placeholder = "Enemy...", 
     Callback = function(v) 
         FarmState.SelectedTargetLower = string.lower(v)
         CurrentTarget = nil 
-        updateStatus("Target: " .. v)
     end
-})
-
--- Refresh Enemy List Button
-Main:AddButton({
-    Name = "Refresh Enemy List", 
-    Callback = function()
-        if EnemyDropdown.SetValues then 
-            EnemyDropdown:SetValues(getEnemyNames()) 
-        end 
-        updateStatus("Enemy list refreshed")
-    end
-})
+}) -- [cite: 37, 38, 41]
 
 -- Settings & Security Container
 local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true }) -- [cite: 14, 15]
