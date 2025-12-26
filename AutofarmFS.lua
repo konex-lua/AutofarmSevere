@@ -22,6 +22,7 @@ local FarmState = {
     AutoKick = false,
     BehindDist = 8,
     YOffset = 1,
+    ProximityRange = 500,
     ESP_Enabled = false,
     ESP_Names = false,
     ESP_Level = false,
@@ -280,6 +281,14 @@ Main:AddInput({
 -- Settings & Security Container
 local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true }) -- [cite: 14, 15]
 
+Settings:AddSlider({
+    Name = "Proximity Range",
+    Min = 50,
+    Max = 10000,
+    Default = 500,
+    Callback = function(v) FarmState.ProximityRange = v end
+})
+
 Settings:AddToggle({
     Name = "Auto-Block (F)", 
     Value = true, 
@@ -358,11 +367,23 @@ task.spawn(function()
                 if os.clock() >= targetSwitchTime then
                     local folder = Workspace:FindFirstChild("Enemies")
                     if folder then
+                        local closestTarget = nil
+                        local closestDistance = FarmState.ProximityRange
+                        
                         for _, m in ipairs(folder:GetChildren()) do
                             if not isDead(m) and string.find(string.lower(m.Name), FarmState.SelectedTargetLower) then
-                                CurrentTarget = m; break
+                                local enemyRoot = getRoot(m)
+                                if enemyRoot then
+                                    local distance = (root.Position - enemyRoot.Position).Magnitude
+                                    if distance <= closestDistance then
+                                        closestDistance = distance
+                                        closestTarget = m
+                                    end
+                                end
                             end
                         end
+                        
+                        CurrentTarget = closestTarget
                     end
                 end
             end
