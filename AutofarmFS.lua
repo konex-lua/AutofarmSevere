@@ -392,72 +392,28 @@ end)
 
 task.spawn(function()
     local phase, cooldownEnds, phaseStart = "idle", 0, 0
-        end
-    }) -- [cite: 25]
-
-    -- ESP Visuals Container
-    local EspCont = EspTab:AddContainer({ Name = "ESP Settings", Side = "Left", AutoSize = true }) -- [cite: 14, 15]
-
-    EspCont:AddToggle({Name = "ESP On", Value = false, Callback = function(v) FarmState.ESP_Enabled = v end}) -- [cite: 22]
-    EspCont:AddToggle({Name = "Name", Value = false, Callback = function(v) FarmState.ESP_Names = v end}) -- [cite: 22]
-    EspCont:AddToggle({Name = "Level", Value = false, Callback = function(v) FarmState.ESP_Level = v end}) -- [cite: 22]
-    EspCont:AddToggle({Name = "NPC Health", Value = false, Callback = function(v) FarmState.ESP_Health = v end}) -- [cite: 22]
-    EspCont:AddToggle({Name = "Boss Alert", Value = false, Callback = function(v) FarmState.BossAlert = v end}) -- [cite: 22]
-
-    -- ========= CORE LOOPS =========
-    task.spawn(function()
-        while true do
-            if FarmState.ESP_Enabled then
-                local enemies = Workspace:FindFirstChild("Enemies")
-                if enemies then
-                    for _, enemy in ipairs(enemies:GetChildren()) do
-                        if not isDead(enemy) then applyESP(enemy) end
-                    end
-                end
-            end
-            task.wait(2)
-        end
-    end)
-
-    task.spawn(function()
-        local phase, cooldownEnds, phaseStart = "idle", 0, 0
-        local isHealing = false
+    local isHealing = false
+    
+    while true do
+        local root = getRoot(LocalPlayer.Character)
         
-        while true do
-            local root = getRoot(LocalPlayer.Character)
-            
-            -- Health Check System
-            if FarmState.HealthCheck and not isHealing then
-                local healthPercent = getHealthPercentage()
-                if healthPercent <= FarmState.HealthThreshold then
-                    isHealing = true
-                    emergencyHeal()
-                    -- Wait for healing to complete (variable time until max health)
-                    task.delay(10, function() -- Max 10 second timeout
-                        isHealing = false
-                    end)
-                end
+        -- Health Check System
+        if FarmState.HealthCheck and not isHealing then
+            local healthPercent = getHealthPercentage()
+            if healthPercent <= FarmState.HealthThreshold then
+                isHealing = true
+                emergencyHeal()
+                -- Wait for healing to complete (variable time until max health)
+                task.delay(10, function() -- Max 10 second timeout
+                    isHealing = false
+                end)
             end
-            
-            if root and FarmState.Enabled and FarmState.SelectedTargetLower ~= "" and not Library.Visible and not isHealing then
-                -- Find target if needed
-                if not CurrentTarget or isDead(CurrentTarget) then
-                    CurrentTarget = nil
-                    local folder = Workspace:FindFirstChild("Enemies")
-                    if folder then
-                        local closestTarget = nil
-                        local closestDistance = FarmState.ProximityRange
-                        
-                        for _, m in ipairs(folder:GetChildren()) do
-                            if not isDead(m) and string.find(string.lower(m.Name), FarmState.SelectedTargetLower) then
-                                local enemyRoot = getRoot(m)
-                                if enemyRoot and enemyRoot.Position and root.Position then
-                                    local diff = root.Position - enemyRoot.Position
-                                    local distance = (diff.X^2 + diff.Y^2 + diff.Z^2)^0.5
-                                    if distance <= closestDistance then
-                                        closestDistance = distance
-                                        closestTarget = m
-                                    end
+        end
+        
+        if root and FarmState.Enabled and FarmState.SelectedTargetLower ~= "" and not Library.Visible and not isHealing then
+            -- Find target if needed
+            if not CurrentTarget or isDead(CurrentTarget) then
+                CurrentTarget = nil
                 local folder = Workspace:FindFirstChild("Enemies")
                 if folder then
                     local closestTarget = nil
