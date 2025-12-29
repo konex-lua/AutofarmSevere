@@ -1,4 +1,4 @@
---!optimize 2
+    --!optimize 2
 --[[
     SYRA AUTOFARM | v3.0
     - Clean: Removed unnecessary code and optimized
@@ -41,12 +41,27 @@ local function updateStatus(txt)
 end
 
 local function severeTeleport(part, pos)
-    if not part or not part.Parent then return end
+    if not part or not part.Parent then 
+        return 
+    end
+    
+    -- Advanced memory-based teleport using proper offsets
     pcall(function()
         local addr = engine.get_instance_address(part)
         if addr and addr ~= 0 then 
-            buffer.writef32(TELE_BUFF, 0, pos.X); buffer.writef32(TELE_BUFF, 4, pos.Y); buffer.writef32(TELE_BUFF, 8, pos.Z)
-            memory.writebuffer(addr + 0x4C, TELE_BUFF) 
+            -- Direct position write using proper memory offset
+            local posBuffer = buffer.create(12)
+            buffer.writef32(posBuffer, 0, pos.X)
+            buffer.writef32(posBuffer, 4, pos.Y) 
+            buffer.writef32(posBuffer, 8, pos.Z)
+            memory.writebuffer(addr + 0x4C, posBuffer)
+            
+            -- Zero out velocity for instant stop
+            local velBuffer = buffer.create(12)
+            buffer.writef32(velBuffer, 0, 0)
+            buffer.writef32(velBuffer, 4, 0)
+            buffer.writef32(velBuffer, 8, 0)
+            memory.writebuffer(addr + 0x50, velBuffer)
         end
     end)
 end
@@ -55,6 +70,14 @@ local function getRoot(m) return m and (m:FindFirstChild("HumanoidRootPart") or 
 
 local function isDead(m)
     if not m or not m.Parent then return true end
+    
+    -- Check enemy State property - State = "dead" means enemy is dead
+    local stateValue = m:FindFirstChild("State")
+    if stateValue and stateValue.Value == "dead" then
+        return true -- Enemy is dead when State = "dead"
+    end
+    
+    -- Fallback to humanoid health check
     local hum = m:FindFirstChildOfClass("Humanoid")
     return (hum and hum.Health <= 0) or false
 end
@@ -67,42 +90,207 @@ local function getPlayerNames()
     return #n > 0 and n or {"No Players Found"}
 end
 
+local function getEnemyNames()
+    local n = {}
+    local seen = {} -- Track seen names to avoid duplicates
+    local enemiesFolder = Workspace:FindFirstChild("Enemies")
+    if enemiesFolder then
+        for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+            if enemy and enemy.Name and enemy.Name ~= "" then
+                -- Extract base enemy name (remove numbers/suffixes)
+                local baseName = string.match(enemy.Name, "^([%w%s]+)") or enemy.Name
+                baseName = string.gsub(baseName, "%s+$", "") -- Remove trailing spaces
+                
+                -- Only add if we haven't seen this base name before
+                if not seen[baseName] then
+                    seen[baseName] = true
+                    table.insert(n, baseName)
+                end
+            end
+        end
+    end
+    
+    -- Sort the list alphabetically
+    table.sort(n, function(a, b) return a < b end)
+    
+    -- Add some test enemies if none found to ensure dropdown works
+    if #n == 0 then
+        table.insert(n, "Test Enemy 1")
+        table.insert(n, "Test Enemy 2")
+        table.insert(n, "Test Enemy 3")
+    end
+    
+    return #n > 0 and n or {"No Enemies Found"}
+end
+
 -- ========= HEALTH PROTECTION =========
+local isCharging = false -- Track if currently charging
+
 local function getHealthPercentage()
     local character = LocalPlayer.Character
-    if not character then return 100 end
+    if not character then 
+        print("[Health Debug] No character found")
+        return 100 
+    end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return 100 end
-    return math.floor((humanoid.Health / humanoid.MaxHealth) * 100)
+    if not humanoid then 
+        print("[Health Debug] No humanoid found")
+        return 100 
+    end
+    local maxHealth = humanoid.MaxHealth or 100
+    local currentHealth = humanoid.Health or 0
+    local percentage = math.floor((currentHealth / maxHealth) * 100)
+    print("[Health Debug] Health: " .. currentHealth .. "/" .. maxHealth .. " (" .. percentage .. "%)")
+    return percentage
 end
 
 local function emergencyHeal()
     local root = getRoot(LocalPlayer.Character)
-    if not root then return end
+    if not root then 
+        print("[Health Debug] No root found for teleport")
+        return 
+    end
     
+    print("[Health Debug] Emergency heal triggered!")
     updateStatus("LOW HEALTH! Teleporting to safety...")
     
-    -- Find a safe position far away
-    local safePos = root.Position + Vector3.new(1000, 100, 1000)
+    -- Find a safe position far away (always works, not just during autofarm)
+    local safePos = root.Position + Vector3.new(2000, 100, 2000)
+    print("[Health Debug] Teleporting to: " .. tostring(safePos))
     severeTeleport(root, safePos)
+    print("[Health Debug] Teleport completed")
     
     -- Hold X to charge until health is max
     task.delay(0.5, function()
-        if keypress then keypress(0x58) end -- X key
+        if isCharging then
+            print("[Health Debug] Already charging, skipping")
+            return
+        end
+        
+        isCharging = true
+        print("[Health Debug] Starting charge sequence...")
+        
+        -- Wait 5 seconds after teleport before charging
+        updateStatus("Waiting for combat to end...")
+        for i = 1, 50 do -- 5 seconds countdown
+            task.wait(0.1)
+            if i % 10 == 0 then -- Update every second
+                updateStatus("Waiting for combat to end... " .. (i/10) .. "s")
+            end
+        end
+        
+        -- Check if player is in combat
+        local liveFolder = Workspace:FindFirstChild("Live")
+        local inCombat = false
+        if liveFolder then
+            local risecuFolder = liveFolder:FindFirstChild("Risecu")
+            if risecuFolder then
+                local combatValue = risecuFolder:FindFirstChild("InCombat")
+                if combatValue then
+                    -- Ensure we get a boolean value
+                    local rawValue = combatValue.Value
+                    if type(rawValue) == "boolean" then
+                        inCombat = rawValue
+                    elseif type(rawValue) == "string" then
+                        inCombat = rawValue == "true"
+                    elseif type(rawValue) == "number" then
+                        inCombat = rawValue ~= 0
+                    else
+                        inCombat = false
+                    end
+                    print("[Health Debug] In combat status: " .. tostring(inCombat))
+                end
+            end
+        end
+        
+        if inCombat then
+            print("[Health Debug] Still in combat, cannot charge!")
+            updateStatus("Cannot charge while in combat!")
+            isCharging = false
+            return
+        end
+        
+        print("[Health Debug] Out of combat, starting charging...")
+        updateStatus("Initiating charge...")
+        
+        -- Check if keypress functions exist
+        if keypress then
+            print("[Health Debug] keypress function found, pressing X")
+            keypress(0x58) -- X key
+        else
+            print("[Health Debug] keypress function not found!")
+            isCharging = false
+            return
+        end
+        
+        -- Wait a moment for charging to begin, then monitor health
+        task.wait(1.0) -- Wait for charge to initiate
         updateStatus("Charging health to max...")
+        
+        -- Additional X press to trigger charging mechanism
+        if keypress then
+            print("[Health Debug] Additional X press to trigger charging")
+            keypress(0x58) -- X key
+        end
         
         -- Monitor health until max
         task.spawn(function()
-            while true do
+            local maxAttempts = 150 -- 15 seconds max (longer for charging)
+            local attempts = 0
+            local lastHealth = 0
+            local regenRate = 0
+            local chargeStarted = false
+            
+            while attempts < maxAttempts do
                 local healthPercent = getHealthPercentage()
+                print("[Health Debug] Monitoring health: " .. healthPercent .. "%")
+                
+                -- Calculate regen rate (health increase per check)
+                local currentRegen = healthPercent - lastHealth
+                if currentRegen > 0 then
+                    regenRate = regenRate + currentRegen
+                    print("[Health Debug] Health increased by: " .. currentRegen .. "%")
+                end
+                
+                -- Detect actual charging (significant regen rate)
+                if regenRate > 5 and not chargeStarted then -- More than 5% total regen
+                    chargeStarted = true
+                    print("[Health Debug] Charge detected! Significant regen rate: " .. regenRate .. "%")
+                end
+                
                 if healthPercent >= 99 then -- 99% to account for rounding
-                    if keyup then keyup(0x58) end
+                    print("[Health Debug] Health restored to max!")
+                    if keyup then 
+                        keyup(0x58) 
+                        print("[Health Debug] Released X key")
+                    else
+                        print("[Health Debug] keyup function not found!")
+                    end
                     updateStatus("Health fully restored!")
+                    isCharging = false
                     break
                 end
+                
+                lastHealth = healthPercent
+                attempts = attempts + 1
                 task.wait(0.1)
             end
+            
+            -- Release X key if timeout reached
+            print("[Health Debug] Healing timeout reached")
+            if keyup then 
+                keyup(0x58) 
+                print("[Health Debug] Released X key after timeout")
+            end
+            updateStatus("Healing completed")
+            isCharging = false
         end)
+        
+        -- Hold X key continuously
+        while isCharging do
+            keypress(0x58)
+            task.wait(0.1)
+        end
     end)
 end
 
@@ -294,14 +482,18 @@ Main:AddToggle({
     Callback = function(v) FarmState.Enabled = v end
 }) -- [cite: 22]
 
-Main:AddInput({
-    Name = "Enemy Name", 
-    Placeholder = "Enemy...", 
-    Callback = function(v) 
+-- Enemy Selection Dropdown
+local EnemyDropdown = Main:AddDropdown({
+    Name = "Select Enemy",
+    Values = getEnemyNames(),
+    Default = "",
+    Multi = false,  
+    Callback = function(v)
         FarmState.SelectedTargetLower = string.lower(v)
-        CurrentTarget = nil 
+        CurrentTarget = nil
+        updateStatus("Target: " .. v)
     end
-}) -- [cite: 37, 38, 41]
+})
 
 -- Settings & Security Container
 local Settings = Tab:AddContainer({ Name = "Settings", Side = "Right", AutoSize = true }) -- [cite: 14, 15]
@@ -390,29 +582,56 @@ task.spawn(function()
     end
 end)
 
+-- Standalone Health Protection Loop (works even when autofarm is off)
 task.spawn(function()
-    local phase, cooldownEnds, phaseStart = "idle", 0, 0
     local isHealing = false
     
     while true do
-        local root = getRoot(LocalPlayer.Character)
-        
-        -- Health Check System
-        if FarmState.HealthCheck and not isHealing then
+        -- Health Check System (always active when enabled)
+        if FarmState.HealthCheck and not isHealing and not isCharging then
             local healthPercent = getHealthPercentage()
+            print("[Health Debug] Checking health: " .. healthPercent .. "% vs threshold: " .. FarmState.HealthThreshold .. "%")
+            
             if healthPercent <= FarmState.HealthThreshold then
+                print("[Health Debug] Health threshold reached! Triggering emergency heal...")
                 isHealing = true
                 emergencyHeal()
                 -- Wait for healing to complete (variable time until max health)
                 task.delay(10, function() -- Max 10 second timeout
                     isHealing = false
+                    print("[Health Debug] Healing timeout reset")
                 end)
             end
         end
+        task.wait(0.1) -- Check health frequently
+    end
+end)
+
+task.spawn(function()
+    local phase, cooldownEnds, phaseStart = "idle", 0, 0
+    
+    while true do
+        local root = getRoot(LocalPlayer.Character)
         
-        if root and FarmState.Enabled and FarmState.SelectedTargetLower ~= "" and not Library.Visible and not isHealing then
+        if root and FarmState.Enabled and FarmState.SelectedTargetLower ~= "" and not Library.Visible then
             -- Find target if needed
             if not CurrentTarget or isDead(CurrentTarget) then
+                -- Check if current target died with State = "dead"
+                if CurrentTarget then
+                    local stateValue = CurrentTarget:FindFirstChild("State")
+                    if stateValue and stateValue.Value == "dead" then
+                        -- Stop attacking immediately
+                        mouse1release()
+                        if keyup then
+                            keyup(0x46)
+                        else
+                            keyrelease(0x46)
+                        end
+                        updateStatus("Enemy defeated! Finding new target...")
+                        task.wait(1.0) -- Wait 1 second before finding new target
+                    end
+                end
+                
                 CurrentTarget = nil
                 local folder = Workspace:FindFirstChild("Enemies")
                 if folder then
